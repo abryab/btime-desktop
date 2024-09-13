@@ -9,7 +9,7 @@ import {
   screen,
 } from 'electron'
 import path from 'node:path'
-import { store, widgetKey } from './store'
+import { store } from './store'
 import { join } from 'node:path'
 import { config } from 'dotenv'
 import { getIconPath, getPublicFilePath } from '../shared/getIconPath'
@@ -19,6 +19,7 @@ import isDev from 'electron-is-dev'
 import { release } from 'node:os'
 import { toggleStartUp } from './utils/startup.util'
 import { initIpcMain } from './ipc-main'
+import { widgetKey } from '../shared/widgetKey'
 
 config()
 process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true'
@@ -72,7 +73,7 @@ async function onAppReady() {
       y: btimeStore.bounds.y,
       title: widgetKey.BTime,
       html: 'index.html',
-      devTools: false,
+      devTools: true,
       alwaysOnTop: btimeStore.alwaysOnTop,
       reziable: true,
     })
@@ -109,6 +110,8 @@ async function onAppReady() {
       height: arzChandStore.bounds.height,
       minHeight: 210,
       minWidth: 320,
+      maxWidth: 410,
+      maxHeight: 319,
       width: arzChandStore.bounds.width,
       x: arzChandStore.bounds.x,
       y: arzChandStore.bounds.y,
@@ -150,6 +153,15 @@ async function onAppReady() {
   if (!mainWin) {
     mainWin = await createSettingWindow()
   }
+  const appVersion = app.getVersion()
+  if (store.get('currenctVersion') !== appVersion) {
+    store.set('currenctVersion', appVersion)
+    const settingPage = await createSettingWindow()
+    settingPage.once('ready-to-show', async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      settingPage.webContents.send('update-details', { hello: 'world' })
+    })
+  }
 
   nativeTheme.themeSource = store.get('theme')
   createTray()
@@ -161,6 +173,8 @@ interface Window {
   minHeight: number
   width: number
   minWidth: number
+  maxWidth?: number
+  maxHeight?: number
   x: number
   y: number
   title: string
@@ -170,6 +184,14 @@ interface Window {
   reziable: boolean
 }
 async function createWindow(payload: Window) {
+  //validate x and y
+  const isValdiate = isPointWithinDisplay(payload.x, payload.y)
+  if (!isValdiate) {
+    const displays = screen.getAllDisplays()
+    const { x, y } = displays[0].workArea
+    payload.x = x
+    payload.y = y
+  }
   const win = new BrowserWindow({
     icon: getIconPath(),
     webPreferences: {
@@ -182,12 +204,14 @@ async function createWindow(payload: Window) {
     width: payload.width,
     minHeight: payload.minHeight,
     minWidth: payload.minWidth,
+    maxWidth: payload.maxWidth,
+    maxHeight: payload.maxHeight,
     frame: false,
     transparent: true,
     resizable: payload.reziable,
     alwaysOnTop: payload.alwaysOnTop,
     skipTaskbar: true,
-
+    fullscreenable: false,
     movable: true,
     center: true,
     x: payload.x || undefined,
@@ -201,6 +225,10 @@ async function createWindow(payload: Window) {
     win?.webContents.send('main-process-message', new Date().toLocaleString())
     win.webContents.send('transparent_status', {
       newStatus: store.get(widgetKey[payload.title]).transparentStatus,
+    })
+    const borderRaduis = store.get(widgetKey[payload.title]).borderRaduis
+    win.webContents.send('border-radius', {
+      raduis: borderRaduis ? `${borderRaduis}px` : '28px',
     })
   })
 
@@ -263,13 +291,13 @@ function createTray() {
 function getContextMenu() {
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: `B Time | ${app.getVersion()}`,
+      label: `Widgetify(B Time) | ${app.getVersion()}`,
       enabled: false,
       icon: icon.resize({ height: 19, width: 19 }),
     },
     {
       label: 'Settings',
-      icon: getIcon('icons/settings.png').resize({ height: 19, width: 19 }),
+      icon: getIcon('icons/setting.png').resize({ height: 19, width: 19 }),
       click: async function () {
         let settingWin = BrowserWindow.getAllWindows().find(
           (win) => win.getTitle() === 'Setting'
@@ -300,6 +328,14 @@ function getContextMenu() {
       icon: getIcon('icons/link.png').resize({ height: 19, width: 19 }),
       click: function () {
         shell.openExternal('https://github.com/sajjadmrx/btime-desktop')
+      },
+    },
+    {
+      label: 'Restart',
+      icon: getIcon('icons/restart.png'),
+      click: function () {
+        app.relaunch()
+        app.exit(0)
       },
     },
     {
@@ -413,4 +449,19 @@ function onResized(win: BrowserWindow) {
       })
     }
   })
+}
+
+function isPointWithinDisplay(x: number, y: number) {
+  const allDisplays = screen.getAllDisplays()
+  let isValdiate = false
+
+  for (const display of allDisplays) {
+    const { x: dx, y: dy, width, height } = display.workArea
+    if (x >= dx && x < dx + width && y >= dy && y < dy + height) {
+      isValdiate = true
+      break
+    }
+  }
+
+  return isValdiate
 }
